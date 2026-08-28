@@ -89,6 +89,11 @@ python3 -m venv .venv
 之后直接对 AI 说：「用 ghradar 找找有没有现成的本地大模型 RAG 框架」，它就会调用
 `search_repos` 而不是去逐页翻 GitHub。
 
+`ghradar` 的 MCP server 内置**每天首次使用时的后台增量更新**钩子：
+首次调用 `search_repos` / `get_repo` / `index_stats` 时，会后台异步启动
+`ghradar update --min-stars 5000 --days 7 && ghradar embed`，当次请求立即返回、不阻塞；
+当天仅触发一次（`data/.last_auto_update` 去重，`data/.autoupdate.lock` 防并发）。
+
 ## 移植到其他 harness / 环境
 
 ghradar 是**自包含、可移植**的：代码（纯 Python 包）+ 数据（索引/向量/模型缓存）+ 一个
@@ -147,6 +152,8 @@ GitHub Search 单查询最多返回 1000 条，因此按「**星数桶 → pushe
 | `GHRADAR_EMBED_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | 向量模型 |
 | `GHRADAR_EMBED_DIM` | `384` | 向量维度（须与模型一致） |
 | `GHRADAR_MIN_STARS` | `100` | 默认抓取星数下限 |
+| `GHRADAR_AUTO_MIN_STARS` | `5000` | 自动后台更新抓取星数下限 |
+| `GHRADAR_AUTO_DAYS` | `7` | 自动后台更新增量天数 |
 
 ## 目录结构
 
@@ -159,6 +166,7 @@ ghradar/
   retriever.py   语义 + 关键词 RRF 混合检索
   cli.py         命令行入口
   mcp_server.py  MCP stdio 服务
+  autoupdate.py   每日首次使用后台触发增量 update + embed
 data/
   repos.db       仓库索引
   repo_ids.npy / vectors.npy   向量（归一化，点积=余弦）
