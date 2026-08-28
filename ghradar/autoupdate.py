@@ -68,8 +68,10 @@ def maybe_trigger_background_update() -> None:
         env.setdefault("PYTHONIOENCODING", "utf-8")
         flags = 0
         if os.name == "nt":
-            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
-                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            flags = (
+                getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
             )
         with open(str(_AUTO_LOG), "a", encoding="utf-8", errors="replace") as f:
             subprocess.Popen(
