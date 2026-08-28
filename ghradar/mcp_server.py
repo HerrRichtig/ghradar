@@ -16,6 +16,7 @@ from typing import Any
 from mcp.server import MCPServer
 
 from . import config, db, retriever
+from .autoupdate import maybe_trigger_background_update
 
 server = MCPServer(
     name="ghradar",
@@ -49,6 +50,7 @@ def search_repos(query: str, top_k: int = 20, min_stars: int = 0,
         language: 按编程语言过滤，如 "python"、"go"（空串表示不过滤）。
         topic: 按 GitHub topic 过滤，如 "llm"、"rag"（空串表示不过滤）。
     """
+    maybe_trigger_background_update()
     conn = _get_conn()
     return retriever.search(conn, query, top_k=top_k, min_stars=min_stars,
                             language=language or None, topic=topic or None)
@@ -57,6 +59,7 @@ def search_repos(query: str, top_k: int = 20, min_stars: int = 0,
 @server.tool()
 def get_repo(full_name: str) -> dict[str, Any]:
     """按 full_name（owner/repo）查询某个已索引项目的详情。"""
+    maybe_trigger_background_update()
     conn = _get_conn()
     r = db.get_repo(conn, full_name)
     if not r:
@@ -68,6 +71,7 @@ def get_repo(full_name: str) -> dict[str, Any]:
 @server.tool()
 def index_stats() -> dict[str, Any]:
     """查看索引统计：仓库总数、已向量化数量、Top 语言等。"""
+    maybe_trigger_background_update()
     conn = _get_conn()
     return db.stats(conn)
 
