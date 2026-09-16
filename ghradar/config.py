@@ -7,6 +7,30 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# ---- 自动加载 .env（ROOT 目录 / .env）----
+# 不依赖外部启动环境也能读到 GITHUB_TOKEN 等配置；
+# 已存在的真实环境变量优先，.env 只补缺失项（显式 export 的优先级最高）。
+def _load_dotenv(path: Path) -> None:
+    try:
+        if not path.exists():
+            return
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
+    except Exception:
+        pass
+
+
+_project_root = Path(__file__).resolve().parent.parent
+_load_dotenv(_project_root / ".env")
+
+
 # ---- 路径 ----
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("GHRADAR_DATA_DIR", str(ROOT / "data")))

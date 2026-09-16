@@ -45,9 +45,21 @@ class GitHubClient:
             if r.status_code == 422:  # 非法查询（如空语言片）
                 return {"total_count": 0, "items": []}
             if r.status_code in (403, 429):
-                reset = int(r.headers.get("X-RateLimit-Reset", 0))
-                wait = max(reset - time.time() + 1, 5) if reset else 30
-                time.sleep(min(wait, 120))
+                # 1) secondary rate limit / 临时限速：优先尊重 Retry-After
+                retry_after = r.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        wait = max(int(retry_after), 1)
+                    except ValueError:
+                        wait = 10
+                # 2) 主配额真的耗尽才按 X-RateLimit-Reset 等待
+                elif r.headers.get("X-RateLimit-Remaining") == "0":
+                    reset = int(r.headers.get("X-RateLimit-Reset", 0))
+                    wait = max(reset - time.time() + 1, 5) if reset else 15
+                # 3) 其余 403（非限速原因）用短退避，避免死睡 120s
+                else:
+                    wait = min(5 + 5 * attempt, 30)
+                time.sleep(min(wait, 60))
                 continue
             time.sleep(2 ** attempt)
         return None
@@ -108,8 +120,23 @@ def _fetch_leaf(client: GitHubClient, conn, q: str, first: dict, stats: dict[str
 
 def _collect(client: GitHubClient, conn, q: str, depth: int,
              stats: dict[str, int], limiter: dict[str, Any], force: bool) -> None:
-    """递归切分：读 page 1 的 total_count，超 1000 则按年份/语言再切。"""
+    """递归切分：读 page 1 的 total_count，超 1000 则按年份/语言再切。
+
+    性能优化：在发起任何 API 请求之前，先用本地 crawl_state 表判断该分片
+    是否「近 7 天刚抓过」（纯 SQLite 查询，约 0ms）。若 fresh，直接计入
+    skipped 并跳过——不再为该分片花费一次 total_count 探测请求 + 限速 sleep。
+    这对 update 场景收益巨大：绝大多数分片都是 fresh，此前每个 fresh 分片
+    也要先发一次 search(page=1) 白耗 2.1s（未认证 6.2s），如今直接秒回。
+
+    正确性：shard_is_fresh 只对「上次作为叶子被 mark_shard_done 的分片」返回
+    True。若一个分片上次是中间节点（被切分），它没有 crawl_state 记录，
+    fresh=False，流程照旧会 search 并递归切分，行为不变。
+    """
     if limiter["max"] is not None and stats["shards"] >= limiter["max"]:
+        return
+    # 优化：fresh 叶子分片直接跳过，零 API 消耗
+    if not force and db.shard_is_fresh(conn, q):
+        stats["skipped"] += 1
         return
     data = client.search(q, page=1)
     if data is None:
@@ -119,9 +146,6 @@ def _collect(client: GitHubClient, conn, q: str, depth: int,
         return
     if total <= 1000 or depth >= 2:
         # 叶子：直接抓取（depth>=2 表示按语言切后仍超 1000，截断为 stars 前 1000）
-        if not force and db.shard_is_fresh(conn, q):
-            stats["skipped"] += 1
-            return
         n = _fetch_leaf(client, conn, q, data, stats)
         db.mark_shard_done(conn, q, n)
         conn.commit()
